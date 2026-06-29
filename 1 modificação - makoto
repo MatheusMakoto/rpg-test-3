@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Lore & Character Sheet Studio</title>
+    
+    <!-- Tailwind CSS (Para Estilização) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Font Awesome (Para Ícones) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- Babel (Para interpretar o JSX no Browser) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        @media print {
+            body { background-color: white !important; color: black !important; }
+            .print\:hidden { display: none !important; }
+        }
+        .scrollbar-thin::-webkit-scrollbar { height: 6px; width: 6px; }
+        .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background-color: #334155; border-radius: 20px; }
+        
+        /* Ajuste para centralizar os ícones FontAwesome nas dimensões do Tailwind */
+        .fas { display: inline-flex; align-items: center; justify-content: center; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased selection:bg-purple-600 selection:text-white">
+    
+    <!-- Onde a aplicação React será renderizada -->
+    <div id="root"></div>
+
+    <!-- Script Principal da Aplicação -->
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // --- Componentes de Ícones (Mapeamento do Lucide para FontAwesome) ---
+        const Sparkles = ({className}) => <i className={"fas fa-wand-magic-sparkles " + (className||'')}></i>;
+        const Swords = ({className}) => <i className={"fas fa-khanda " + (className||'')}></i>;
+        const Heart = ({className}) => <i className={"fas fa-heart " + (className||'')}></i>;
+        const Award = ({className}) => <i className={"fas fa-medal " + (className||'')}></i>;
+        const Shield = ({className}) => <i className={"fas fa-shield-alt " + (className||'')}></i>;
+        const Scroll = ({className}) => <i className={"fas fa-scroll " + (className||'')}></i>;
+        const Download = ({className}) => <i className={"fas fa-download " + (className||'')}></i>;
+        const RefreshCw = ({className}) => <i className={"fas fa-sync " + (className||'')}></i>;
+        const Trash2 = ({className}) => <i className={"fas fa-trash " + (className||'')}></i>;
+        const User = ({className}) => <i className={"fas fa-user " + (className||'')}></i>;
+        const BookOpen = ({className}) => <i className={"fas fa-book-open " + (className||'')}></i>;
+        const Flame = ({className}) => <i className={"fas fa-fire " + (className||'')}></i>;
+        const Compass = ({className}) => <i className={"fas fa-compass " + (className||'')}></i>;
+        const Zap = ({className}) => <i className={"fas fa-bolt " + (className||'')}></i>;
+        const Sliders = ({className}) => <i className={"fas fa-sliders-h " + (className||'')}></i>;
+        const Settings = ({className}) => <i className={"fas fa-cog " + (className||'')}></i>;
+        const HelpCircle = ({className}) => <i className={"fas fa-question-circle " + (className||'')}></i>;
+        const Copy = ({className}) => <i className={"fas fa-copy " + (className||'')}></i>;
+        const Check = ({className}) => <i className={"fas fa-check " + (className||'')}></i>;
+        const Plus = ({className}) => <i className={"fas fa-plus " + (className||'')}></i>;
+        const Minus = ({className}) => <i className={"fas fa-minus " + (className||'')}></i>;
+
+        // --- Configurações Iniciais ---
+        const apiKey = ""; 
+        const firebaseConfig = null; // Desativado no Github Pages (funciona via LocalStorage)
+        const appId = 'rpg-studio-app';
+
+        const saveHistoryToStorage = (historyList) => {
+            try {
+                const cleanHistory = historyList.map(item => {
+                if (item.imageUrl && item.imageUrl.startsWith('data:image')) {
+                    return { ...item, imageUrl: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=500&auto=format&fit=crop&q=60' };
+                }
+                return item;
+                });
+                localStorage.setItem('rpg_studio_history', JSON.stringify(cleanHistory));
+            } catch (e) {
+                console.warn("Quota de armazenamento excedida. A tentar guardar uma versão minimalista do histórico.", e);
+                try {
+                const minimalHistory = historyList.slice(0, 3).map(item => ({
+                    ...item,
+                    imageUrl: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=500'
+                }));
+                localStorage.setItem('rpg_studio_history', JSON.stringify(minimalHistory));
+                } catch (innerError) {
+                console.error("Failsafe Storage falhou por completo.", innerError);
+                }
+            }
+        };
+
+        // --- Componente Principal ---
+        function App() {
+            const [userPrompt, setUserPrompt] = useState('Guerreiro cibernético, melancólico, mestre em espadas laser, de poucas palavras.');
+            const [artStyle, setArtStyle] = useState('concept-art');
+            const [character, setCharacter] = useState(null);
+            const [loadingText, setLoadingText] = useState('');
+            const [loadingImage, setLoadingImage] = useState(false);
+            const [error, setError] = useState(null);
+            const [successToast, setSuccessToast] = useState(null);
+            const [configOpen, setConfigOpen] = useState(false);
+            const [customApiKey, setCustomApiKey] = useState('');
+            const [history, setHistory] = useState([]);
+            const [activeTab, setActiveTab] = useState('lore');
+            const [isEditing, setIsEditing] = useState(false); 
+
+            // Estados do Firebase (nulos pois usaremos LocalStorage no Github Pages)
+            const [db, setDb] = useState(null);
+            const [auth, setAuth] = useState(null);
+            const [user, setUser] = useState(null);
+
+            const [hpAmount, setHpAmount] = useState(10);
+            const [mpAmount, setMpAmount] = useState(10);
+            const [xpAmount, setXpAmount] = useState(100);
+
+            const [diceFormula, setDiceFormula] = useState('2d20 + 1d6 + FOR');
+            const [rollHistory, setRollHistory] = useState([]);
+            const [lastRoll, setLastRoll] = useState(null);
+
+            const [newItemName, setNewItemName] = useState('');
+            const [newItemType, setNewItemType] = useState('Arma');
+            const [newItemDesc, setNewItemDesc] = useState('');
+            const [newItemQty, setNewItemQty] = useState(1);
+            const [newItemFormula, setNewItemFormula] = useState('1d8 + FOR'); 
+            const [newItemDefense, setNewItemDefense] = useState(0); 
+            
+            const [potionType, setPotionType] = useState('HP');
+            const [potionRestoreAmount, setPotionRestoreAmount] = useState(20);
+
+            const [newSkillName, setNewSkillName] = useState('');
+            const [newSkillCost, setNewSkillCost] = useState('10 de Mana');
+            const [newSkillDesc, setNewSkillDesc] = useState('');
+
+            const attributeLabels = {
+                strength: { name: "Força", short: "FOR" },
+                dexterity: { name: "Destreza", short: "DES" },
+                constitution: { name: "Constituição", short: "CON" },
+                intelligence: { name: "Inteligência", short: "INT" },
+                wisdom: { name: "Sabedoria", short: "SAB" },
+                charisma: { name: "Carisma", short: "CAR" }
+            };
+
+            const artStyles = [
+                { id: 'concept-art', name: 'Concept Art', description: 'Arte conceptual detalhada e atmosférica' },
+                { id: 'anime', name: 'Anime/Manga', description: 'Estilo clássico de animação japonesa' },
+                { id: 'pixel-art', name: 'Pixel Art', description: 'Estilo retro de jogos 16-bit' },
+                { id: 'realistic', name: 'Realista', description: 'Retrato cinematográfico ultradetalhado' },
+                { id: 'cyberpunk-neon', name: 'Cyberpunk Neon', description: 'Cores vibrantes e contraste futurista' },
+                { id: 'fantasy-oil', name: 'Pintura a Óleo', description: 'Fantasia clássica com pinceladas rústicas' }
+            ];
+
+            const quickPrompts = [
+                "Necromante steampunk, obcecado por relógios antigos, sarcástico.",
+                "Barda elfa, cosmopolita, usa um sintetizador mágico e é extremamente otimista.",
+                "Monge mercenário felino, caçador de recompensas do deserto, piromaníaco.",
+                "Paladino caído de uma ordem espacial, armadura pesada danificada, heróico."
+            ];
+
+            useEffect(() => {
+                try {
+                const saved = localStorage.getItem('rpg_studio_history');
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    setHistory(parsed);
+                    if (parsed.length > 0) {
+                    setCharacter(parsed[0]);
+                    }
+                }
+                const savedRolls = localStorage.getItem('rpg_studio_rolls');
+                if (savedRolls) {
+                    setRollHistory(JSON.parse(savedRolls));
+                }
+                } catch (e) {
+                console.error("Erro ao carregar histórico", e);
+                }
+            }, []);
+
+            useEffect(() => {
+                if (successToast) {
+                const timer = setTimeout(() => setSuccessToast(null), 3500);
+                return () => clearTimeout(timer);
+                }
+            }, [successToast]);
+
+            const fetchWithRetry = async (url, options, maxRetries = 5) => {
+                let delay = 1000;
+                for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const res = await fetch(url, options);
+                    if (res.ok) return await res.json();
+                    
+                    if (res.status === 429 || res.status >= 500) {
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= 2;
+                    } else {
+                    const errText = await res.text();
+                    throw new Error(`Erro na API (${res.status}): ${errText}`);
+                    }
+                } catch (err) {
+                    if (i === maxRetries - 1) throw err;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    delay *= 2;
+                }
+                }
+            };
+
+            const getActiveApiKey = () => {
+                if (customApiKey && customApiKey.trim() !== '') {
+                return customApiKey.trim();
+                }
+                return apiKey; 
+            };
+
+            const copyTextFallback = (textToCopy) => {
+                const el = document.createElement('textarea');
+                el.value = textToCopy;
+                el.style.position = 'fixed';
+                el.style.top = '0';
+                el.style.left = '0';
+                el.style.opacity = '0';
+                document.body.appendChild(el);
+                el.select();
+                try { document.execCommand('copy'); } catch (err) {}
+                document.body.removeChild(el);
+            };
+
+            const saveAndSyncCharacter = async (charData) => {
+                if (!charData) return;
+                let updatedChar = { ...charData };
+                if (!updatedChar.securityCode) updatedChar.securityCode = 'RPG-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+
+                setCharacter(updatedChar);
+                updateHistoryItem(updatedChar);
+
+                try {
+                const localCodes = localStorage.getItem('rpg_studio_codes') ? JSON.parse(localStorage.getItem('rpg_studio_codes')) : {};
+                let localChar = { ...updatedChar };
+                if (localChar.imageUrl && localChar.imageUrl.startsWith('data:image')) {
+                    localChar.imageUrl = 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=500&auto=format&fit=crop&q=60';
+                }
+                localCodes[updatedChar.securityCode] = localChar;
+                localStorage.setItem('rpg_studio_codes', JSON.stringify(localCodes));
+                } catch (e) {}
+
+                return updatedChar;
+            };
+
+            const generateCharacter = async () => {
+                if (!userPrompt.trim()) { setError("Por favor, digite algumas palavras-chave para criar o seu personagem."); return; }
+                const activeKey = getActiveApiKey();
+                if(!activeKey) { setError("Insira uma chave API do Gemini no botão 'Configurações' para gerar no GitHub Pages."); return; }
+
+                setLoadingText("A forjar a alma, história e mana do personagem com a IA...");
+                setLoadingImage(false);
+                setError(null);
+                setCharacter(null);
+
+                const textModelUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`;
+
+                const systemPrompt = `Você é um mestre de RPG veterano, escritor criativo e designer de jogos.
+                Seu trabalho é pegar palavras-chave do usuário e criar uma ficha técnica de personagem detalhada e balanceada.
+                A saída DEVE ser estritamente em formato JSON válido, seguindo exatamente o esquema definido na requisição, sem markdown adicional ou blocos de código além do próprio JSON bruto.
+                Todo o texto explicativo, lore, nomes de habilidades, itens de equipamentos e descrições DEVE estar em Português de Portugal (PT-PT).
+                O campo "imagePrompt" deve ser escrito em INGLÊS.`;
+
+                const userQuery = `Crie um personagem com base nas palavras-chave: "${userPrompt}". 
+                Estilo de arte desejado para o avatar: ${artStyle}.
+                Gere atributos de RPG (Força, Destreza, Constituição, Inteligência, Sabedoria, Carisma) em escala de 3 a 20 coerentes com as características dele.
+                Crie um HP inicial balanceado (entre 50 e 150), um MP inicial balanceado (entre 20 e 150) e um teto de XP inicial (ex: 1000).
+                Gere uma lore envolvendo 2 parágrafos com fatos intrigantes.
+                Crie de 3 a 4 habilidades especiais.
+                Gere uma lista de 3 a 5 equipamentos iniciais temáticos no inventário. Para armas, inclua uma fórmula de dano (Ex: "1d8 + FOR").
+                Gere um prompt de imagem em inglês descritivo.`;
+
+                const responseSchema = {
+                type: "OBJECT",
+                properties: {
+                    name: { type: "STRING" }, title: { type: "STRING" }, characterClass: { type: "STRING" },
+                    attributes: {
+                    type: "OBJECT",
+                    properties: { strength: { type: "INTEGER" }, dexterity: { type: "INTEGER" }, constitution: { type: "INTEGER" }, intelligence: { type: "INTEGER" }, wisdom: { type: "INTEGER" }, charisma: { type: "INTEGER" } },
+                    required: ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
+                    },
+                    hpMax: { type: "INTEGER" }, mpMax: { type: "INTEGER" }, xpMax: { type: "INTEGER" }, lore: { type: "STRING" },
+                    skills: {
+                    type: "ARRAY", items: { type: "OBJECT", properties: { name: { type: "STRING" }, description: { type: "STRING" }, cost: { type: "STRING" } }, required: ["name", "description", "cost"] }
+                    },
+                    equipment: {
+                    type: "ARRAY", items: {
+                        type: "OBJECT", properties: { name: { type: "STRING" }, type: { type: "STRING" }, description: { type: "STRING" }, quantity: { type: "INTEGER" }, formula: { type: "STRING" }, armorDefense: { type: "INTEGER" }, isEquipped: { type: "BOOLEAN" } },
+                        required: ["name", "type", "description", "quantity", "formula"]
+                    }
+                    },
+                    imagePrompt: { type: "STRING" }
+                },
+                required: ["name", "title", "characterClass", "attributes", "hpMax", "mpMax", "xpMax", "lore", "skills", "equipment", "imagePrompt"]
+                };
+
+                const textPayload = { contents: [{ parts: [{ text: userQuery }] }], systemInstruction: { parts: [{ text: systemPrompt }] }, generationConfig: { responseMimeType: "application/json", responseSchema: responseSchema } };
+
+                try {
+                const textResult = await fetchWithRetry(textModelUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(textPayload) });
+                let charData;
+                try {
+                    const textResponse = textResult.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (!textResponse) throw new Error("A IA de texto retornou uma resposta em branco.");
+                    charData = JSON.parse(textResponse);
+                    
+                    charData.hpCurrent = charData.hpMax;
+                    charData.mpMax = charData.mpMax || 50;
+                    charData.mpCurrent = charData.mpMax;
+                    charData.xpCurrent = 0; charData.level = 1; charData.artStyle = artStyle;
+                    charData.equipment = charData.equipment || []; charData.skills = charData.skills || [];
+                    charData.securityCode = 'RPG-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+                } catch (parseError) { throw new Error("Falha ao estruturar os dados do personagem. Tente novamente."); }
+
+                setCharacter(charData);
+                setLoadingText("");
+                await generateAvatar(charData);
+                } catch (err) {
+                setError(err.message || "Ocorreu um erro ao contactar a API de inteligência artificial.");
+                setLoadingText(""); setLoadingImage(false);
+                }
+            };
+
+            const generateAvatar = async (charData) => {
+                setLoadingImage(true);
+                const activeKey = getActiveApiKey();
+                const imageUrl = `https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key=${activeKey}`;
+                const finalImagePrompt = `${charData.imagePrompt}, close-up character portrait, centered composition, digital art, masterpiece, 4k resolution`;
+                const imagePayload = { instances: { prompt: finalImagePrompt }, parameters: { sampleCount: 1 } };
+
+                try {
+                const imageResult = await fetchWithRetry(imageUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(imagePayload) });
+                const base64Bytes = imageResult.predictions?.[0]?.bytesBase64Encoded;
+                if (!base64Bytes) throw new Error("A API de imagem não retornou dados visuais.");
+                const generatedImageUrl = `data:image/png;base64,${base64Bytes}`;
+                
+                const updatedCharacter = { ...charData, imageUrl: generatedImageUrl };
+                await saveAndSyncCharacter(updatedCharacter);
+                setSuccessToast("Arte do personagem materializada com sucesso!");
+                } catch (err) {
+                const fallbackImage = `https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=500&auto=format&fit=crop&q=60&ixlib=rb-4.0.3`;
+                const updatedCharacter = { ...charData, imageUrl: fallbackImage, imageGenerationFailed: true };
+                await saveAndSyncCharacter(updatedCharacter);
+                setError("A lore foi criada, mas ocorreu um erro ao gerar o avatar. A usar imagem alternativa.");
+                } finally { setLoadingImage(false); }
+            };
+
+            const regenerateLore = async () => {
+                if (!character) return;
+                setLoadingText("A reescrever a história do herói com a IA...");
+                setError(null);
+                
+                const activeKey = getActiveApiKey();
+                const textModelUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${activeKey}`;
+                const systemPrompt = `Você é um mestre de RPG veterano e escritor criativo. Reescreva a história (2 parágrafos). Retorne JSON {"lore": "..."}`;
+                const userQuery = `Nome atual: ${character.name}\nTítulo: ${character.title}\nClasse: ${character.characterClass}\nHistória anterior: ${character.lore}`;
+                
+                try {
+                const textResult = await fetchWithRetry(textModelUrl, {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                    contents: [{ parts: [{ text: userQuery }] }],
+                    systemInstruction: { parts: [{ text: systemPrompt }] },
+                    generationConfig: { responseMimeType: "application/json", responseSchema: { type: "OBJECT", properties: { lore: { type: "STRING" } }, required: ["lore"] } }
+                    })
+                });
+                const textResponse = textResult.candidates?.[0]?.content?.parts?.[0]?.text;
+                const parsed = JSON.parse(textResponse);
+                await saveAndSyncCharacter({ ...character, lore: parsed.lore });
+                setSuccessToast("Lore recomposta pela IA!");
+                } catch (err) { setError("Não foi possível chamar a IA de reescrita."); } finally { setLoadingText(""); }
+            };
+
+            const updateHp = (amount) => { if (!character) return; saveAndSyncCharacter({ ...character, hpCurrent: Math.max(0, Math.min(character.hpMax, character.hpCurrent + amount)) }); };
+            const updateMp = (amount) => { if (!character) return; const maxMana = character.mpMax || 50; const currentMana = character.mpCurrent !== undefined ? character.mpCurrent : maxMana; saveAndSyncCharacter({ ...character, mpCurrent: Math.max(0, Math.min(maxMana, currentMana + amount)) }); };
+            const updateXp = (amount) => {
+                if (!character) return;
+                let newXp = character.xpCurrent + amount; let newMax = character.xpMax; let currentLevel = character.level || 1; let leveledUp = false;
+                if (newXp >= character.xpMax) { newXp = newXp - character.xpMax; newMax = Math.round(character.xpMax * 1.5); currentLevel += 1; leveledUp = true; } else if (newXp < 0) newXp = 0;
+                const updated = { ...character, xpCurrent: newXp, xpMax: newMax, level: currentLevel, hpMax: leveledUp ? character.hpMax + 15 : character.hpMax, hpCurrent: leveledUp ? character.hpMax + 15 : character.hpCurrent, mpMax: leveledUp ? (character.mpMax || 50) + 10 : (character.mpMax || 50), mpCurrent: leveledUp ? (character.mpMax || 50) + 10 : (character.mpCurrent !== undefined ? character.mpCurrent : (character.mpMax || 50)) };
+                if (leveledUp) setSuccessToast(`NÍVEL SUBIU! Agora é Nível ${currentLevel}!`);
+                saveAndSyncCharacter(updated);
+            };
+
+            const updateAttribute = (attrKey, amount) => {
+                if (!character) return;
+                const currentVal = character.attributes[attrKey] !== undefined ? character.attributes[attrKey] : 10;
+                saveAndSyncCharacter({ ...character, attributes: { ...character.attributes, [attrKey]: Math.max(1, Math.min(30, currentVal + amount)) } });
+            };
+
+            const executeCalculatedRoll = (formulaString, sourceLabel) => {
+                let expression = formulaString.trim().toUpperCase();
+                if (!expression) return;
+                const diceBreakdown = []; let processingExpr = expression;
+                const charMods = {
+                'FOR': character ? Math.floor(((character.attributes.strength || 10) - 10) / 2) : 0,
+                'DES': character ? Math.floor(((character.attributes.dexterity || 10) - 10) / 2) : 0,
+                'CON': character ? Math.floor(((character.attributes.constitution || 10) - 10) / 2) : 0,
+                'INT': character ? Math.floor(((character.attributes.intelligence || 10) - 10) / 2) : 0,
+                'SAB': character ? Math.floor(((character.attributes.wisdom || 10) - 10) / 2) : 0,
+                'CAR': character ? Math.floor(((character.attributes.charisma || 10) - 10) / 2) : 0,
+                };
+
+                Object.keys(charMods).forEach(key => {
+                const regex = new RegExp(`\\b${key}\\b`, 'g');
+                if (regex.test(processingExpr)) { const val = charMods[key]; processingExpr = processingExpr.replace(regex, val >= 0 ? `+${val}` : `${val}`); diceBreakdown.push({ name: `Mod ${key}`, detail: val >= 0 ? `+${val}` : `${val}`, value: val }); }
+                });
+
+                const diceRegex = /(\d*)[D](\d+)/g; let match; const matchesToRoll = [];
+                while ((match = diceRegex.exec(processingExpr)) !== null) { matchesToRoll.push({ fullMatch: match[0], count: match[1] === "" ? 1 : parseInt(match[1]), sides: parseInt(match[2]) }); }
+                
+                let rolledExpr = processingExpr;
+                matchesToRoll.forEach(item => {
+                const rolls = []; for (let i = 0; i < item.count; i++) rolls.push(Math.floor(Math.random() * item.sides) + 1);
+                const sum = rolls.reduce((a, b) => a + b, 0); const detailStr = `[${rolls.join(' + ')}]`;
+                rolledExpr = rolledExpr.replace(item.fullMatch, sum);
+                diceBreakdown.push({ name: item.fullMatch, detail: detailStr, value: sum, individual: rolls });
+                });
+
+                const sanitizedMathExpr = rolledExpr.replace(/[^0-9+\-*/().\s]/g, ''); let finalSum = 0;
+                try { finalSum = Function(`"use strict"; return (${sanitizedMathExpr})`)(); if (finalSum < 0) finalSum = 0; } catch (calcError) { setError(`Erro de Sintaxe`); return; }
+
+                const currentRoll = { formula: `${sourceLabel} (${expression})`, breakdown: diceBreakdown, calculatedExpr: sanitizedMathExpr, total: finalSum, timestamp: new Date().toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) };
+                setLastRoll(currentRoll);
+                setRollHistory(prev => { const updatedList = [currentRoll, ...prev].slice(0, 5); localStorage.setItem('rpg_studio_rolls', JSON.stringify(updatedList)); return updatedList; });
+                setSuccessToast(`Rolagem [${sourceLabel}]: ${finalSum}! ⚔️`);
+            };
+            const rollDice = () => executeCalculatedRoll(diceFormula, 'Mesa de Dados');
+
+            const addEquipment = () => {
+                if (!newItemName.trim()) { setError("Por favor, dê um nome ao item."); return; }
+                const newItem = { name: newItemName, type: newItemType, description: newItemDesc || "Nenhum efeito detalhado.", quantity: Math.max(1, newItemQty), formula: newItemType === 'Arma' ? newItemFormula : '', potionTarget: newItemType === 'Pocao' ? potionType : null, potionRestoreValue: newItemType === 'Pocao' ? Number(potionRestoreAmount) : null, armorDefense: newItemType === 'Armadura' ? Number(newItemDefense) : 0, isEquipped: false };
+                saveAndSyncCharacter({ ...character, equipment: [...(character.equipment || []), newItem] });
+                setNewItemName(''); setNewItemDesc(''); setNewItemQty(1); setNewItemFormula('1d8 + FOR'); setNewItemDefense(0); setError(null); setSuccessToast(`"${newItem.name}" adicionado!`);
+            };
+            const deleteEquipment = (index) => { if (!character) return; const currentEq = [...(character.equipment || [])]; currentEq.splice(index, 1); saveAndSyncCharacter({ ...character, equipment: currentEq }); };
+            const changeEquipmentQty = (index, amount) => {
+                if (!character) return; const currentEq = [...(character.equipment || [])]; const currentQty = currentEq[index].quantity || 0; const targetQty = Math.max(0, currentQty + amount);
+                if (targetQty === 0) currentEq.splice(index, 1); else currentEq[index].quantity = targetQty;
+                saveAndSyncCharacter({ ...character, equipment: currentEq });
+            };
+            const handleEquipmentFormulaChange = (index, value) => { if (!character) return; const currentEq = [...(character.equipment || [])]; currentEq[index].formula = value; saveAndSyncCharacter({ ...character, equipment: currentEq }); };
+            const toggleEquipArmor = (index) => { if (!character) return; const currentEq = [...(character.equipment || [])]; currentEq[index].isEquipped = !currentEq[index].isEquipped; saveAndSyncCharacter({ ...character, equipment: currentEq }); };
+            
+            const useEquipmentItem = (item, index) => {
+                if (!character || item.quantity <= 0) return;
+                const updatedCharacter = { ...character };
+                if (item.type === 'Pocao') {
+                const target = item.potionTarget || 'HP'; const amountToRestore = item.potionRestoreValue || 20;
+                if (target === 'HP') updatedCharacter.hpCurrent = Math.max(0, Math.min(updatedCharacter.hpMax, (updatedCharacter.hpCurrent || 0) + amountToRestore));
+                else updatedCharacter.mpCurrent = Math.max(0, Math.min(updatedCharacter.mpMax || 50, (updatedCharacter.mpCurrent !== undefined ? updatedCharacter.mpCurrent : 50) + amountToRestore));
+                setSuccessToast(`Usou ${item.name}!`);
+                } else if (item.type === 'Arma') { executeCalculatedRoll(item.formula || '1d6 + FOR', item.name); }
+                else { if (item.formula && item.formula.trim() !== '') executeCalculatedRoll(item.formula, item.name); else setSuccessToast(`Utilizou "${item.name}"`); }
+                
+                const currentEq = [...(updatedCharacter.equipment || [])];
+                const targetQty = Math.max(0, (currentEq[index].quantity || 0) - 1);
+                if (targetQty === 0) currentEq.splice(index, 1); else currentEq[index].quantity = targetQty;
+                updatedCharacter.equipment = currentEq;
+                saveAndSyncCharacter(updatedCharacter);
+            };
+
+            const addSkill = () => { if (!newSkillName.trim()) return; saveAndSyncCharacter({ ...character, skills: [...(character.skills || []), { name: newSkillName, cost: newSkillCost || "Nenhum", description: newSkillDesc || "Sem descrição." }] }); setNewSkillName(''); };
+            const deleteSkill = (index) => { if (!character) return; const currentSkills = [...(character.skills || [])]; currentSkills.splice(index, 1); saveAndSyncCharacter({ ...character, skills: currentSkills }); };
+            const appendToFormula = (val) => setDiceFormula(prev => prev.trim() ? (['+', '-', '*', '/'].includes(prev.trim().slice(-1)) ? `${prev} ${val}` : `${prev} + ${val}`) : val);
+            const clearFormula = () => setDiceFormula('');
+            const handleFieldChange = (field, value) => saveAndSyncCharacter({ ...character, [field]: value });
+            const handleMaxChange = (field, value) => { const num = Math.max(1, parseInt(value) || 0); let cur = field === 'hpMax' ? 'hpCurrent' : field === 'mpMax' ? 'mpCurrent' : 'xpCurrent'; saveAndSyncCharacter({ ...character, [field]: num, [cur]: Math.min(character[cur] || 0, num) }); };
+            
+            const updateHistoryItem = (updatedChar) => setHistory(prev => { const idx = prev.findIndex(i => i.name === updatedChar.name); if(idx !== -1) { const clone = [...prev]; clone[idx] = updatedChar; saveHistoryToStorage(clone); return clone; } return prev; });
+            const deleteHistoryItem = (name, e) => { e.stopPropagation(); const updated = history.filter(i => i.name !== name); setHistory(updated); saveHistoryToStorage(updated); if (character && character.name === name) setCharacter(updated[0] || null); };
+            
+            const downloadPdf = async () => {
+                if (!character) return;
+                const savedChar = await saveAndSyncCharacter(character);
+                const printWindow = window.open('', '_blank');
+                if (!printWindow) return setError("Bloqueador de pop-ups impediu a exportação em PDF.");
+                
+                printWindow.document.write(`
+                <!DOCTYPE html>
+                <html lang="pt">
+                    <head>
+                    <meta charset="UTF-8">
+                    <title>Ficha_RPG_${savedChar.name}</title>
+                    <script src="https://cdn.tailwindcss.com"><\/script>
+                    <style>@page { size: A4 portrait; margin: 10mm; } body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; } </style>
+                    </head>
+                    <body class="p-4 mx-auto max-w-[210mm]">
+                        <h1 class="text-3xl font-black">${savedChar.name}</h1>
+                        <p class="text-xs text-slate-500 italic mb-4">"${savedChar.title}" - ${savedChar.characterClass} Nível ${savedChar.level||1}</p>
+                        <div class="grid grid-cols-2 gap-4">
+                            <img src="${savedChar.imageUrl}" class="w-full rounded-2xl border" />
+                            <div class="space-y-4">
+                                <div class="p-4 bg-slate-100 rounded-lg">HP: ${savedChar.hpCurrent}/${savedChar.hpMax} | MP: ${savedChar.mpCurrent}/${savedChar.mpMax}</div>
+                                <div class="text-xs leading-relaxed">${savedChar.lore}</div>
+                            </div>
+                        </div>
+                        <script>window.onload = function() { setTimeout(function(){ window.print(); }, 500); };<\/script>
+                    </body>
+                </html>
+                `);
+                printWindow.document.close();
+            };
+
+            const maxMana = character ? (character.mpMax || 50) : 50;
+            const currentMana = character ? (character.mpCurrent !== undefined ? character.mpCurrent : maxMana) : 50;
+            const totalArmorDefense = character?.equipment?.reduce((total, item) => (item.type === 'Armadura' && item.isEquipped) ? total + (Number(item.armorDefense) || 0) : total, 0) || 0;
+
+            return (
+                <div className="flex flex-col min-h-screen">
+                {/* Notificações */}
+                {successToast && (
+                    <div className="fixed bottom-6 right-6 z-50 bg-gradient-to-r from-emerald-600 to-teal-600 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 border border-emerald-500/20 print:hidden">
+                    <Check className="h-5 w-5 bg-emerald-500/30 rounded-full p-0.5" />
+                    <span className="font-medium text-sm">{successToast}</span>
+                    </div>
+                )}
+
+                {/* HEADER */}
+                <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md sticky top-0 z-40 px-4 py-3 flex items-center justify-between print:hidden">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-gradient-to-tr from-purple-600 to-indigo-600 p-2.5 rounded-xl shadow-lg">
+                            <Swords className="h-6 w-6 text-white" />
+                        </div>
+                        <div>
+                            <h1 className="font-bold text-lg sm:text-2xl md:text-3xl bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">AI Lore & Character Sheet</h1>
+                        </div>
+                    </div>
+                    <button onClick={() => setConfigOpen(true)} className="p-2.5 rounded-xl bg-slate-800 text-white flex items-center gap-2 text-sm"><Settings className="h-4.5 w-4.5" /><span className="hidden md:inline">API</span></button>
+                </header>
+
+                {/* MODAL CONFIGURAÇÕES */}
+                {configOpen && (
+                    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl">
+                        <div className="p-6 space-y-4">
+                            <h3 className="font-bold text-lg flex items-center gap-2"><Settings className="text-purple-400" /> Configuração GitHub Pages</h3>
+                            <p className="text-sm text-slate-400">Para usar a Inteligência Artificial nesta versão alojada por si, insira a sua chave da Google Gemini API abaixo (ela é salva apenas no seu navegador).</p>
+                            <input type="password" value={customApiKey} onChange={(e) => setCustomApiKey(e.target.value)} placeholder="Cole a sua Chave de API aqui..." className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm" />
+                            <button onClick={() => setConfigOpen(false)} className="w-full bg-purple-600 hover:bg-purple-500 text-white font-semibold text-sm px-5 py-3 rounded-xl">Guardar</button>
+                        </div>
+                    </div>
+                    </div>
+                )}
+
+                {/* CONTEÚDO PRINCIPAL */}
+                <main className="flex-1 max-w-7xl w-full mx-auto p-4 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                    
+                    {/* ESQUERDA - CRIAÇÃO & DADOS */}
+                    <section className="lg:col-span-5 space-y-6">
+                        <div className="bg-slate-900/80 border border-slate-800/80 rounded-2xl p-6 shadow-xl space-y-5 relative overflow-hidden">
+                            <h2 className="font-bold text-base text-white flex items-center gap-2"><Sparkles className="text-purple-400" /> Criar Personagem</h2>
+                            <textarea value={userPrompt} onChange={(e) => setUserPrompt(e.target.value)} className="w-full h-32 bg-slate-950 border border-slate-850 rounded-xl p-4 text-white text-sm focus:outline-none" />
+                            <button onClick={generateCharacter} disabled={loadingText || loadingImage} className="w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-3">
+                                {loadingText ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />} {loadingText ? "A conjurar..." : "Gerar Personagem"}
+                            </button>
+                        </div>
+
+                        <div className="bg-slate-900/80 border border-slate-800/80 rounded-2xl p-6 shadow-xl space-y-4">
+                            <h3 className="font-bold text-sm text-white flex items-center gap-2"><Zap className="text-indigo-400" /> Mesa de Dados</h3>
+                            <div className="flex gap-2">
+                                <input type="text" value={diceFormula} onChange={(e) => setDiceFormula(e.target.value)} className="w-full bg-slate-950 border border-slate-850 rounded-xl px-4 py-2 text-white font-mono" />
+                                <button onClick={rollDice} className="bg-purple-600 text-white font-bold px-4 rounded-xl flex items-center gap-1"><RefreshCw className="h-3.5 w-3.5" /> Calcular</button>
+                            </div>
+                            {lastRoll && (
+                                <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl">
+                                    <span className="text-xs text-purple-400 font-mono">{lastRoll.formula}</span>
+                                    <div className="text-3xl font-black text-white">{lastRoll.total}</div>
+                                </div>
+                            )}
+                        </div>
+                    </section>
+
+                    {/* DIREITA - FICHA DE PERSONAGEM */}
+                    <section className="lg:col-span-7">
+                        {!character && (
+                            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center text-slate-500">
+                                Nenhum personagem conjurado. Preencha os detalhes ao lado e gere o seu herói! (Não se esqueça da Chave API no menu).
+                            </div>
+                        )}
+
+                        {character && (
+                            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
+                                <div className="p-6 space-y-6">
+                                    <div className="flex justify-between items-start">
+                                        <div>
+                                            <span className="text-xs text-purple-400 font-bold uppercase">{character.characterClass} - Nível {character.level}</span>
+                                            <h2 className="text-3xl font-black text-white">{character.name}</h2>
+                                            <p className="text-slate-400 italic">"{character.title}"</p>
+                                        </div>
+                                        <button onClick={downloadPdf} className="bg-purple-600 p-3 rounded-xl text-white flex items-center gap-2 text-xs"><Download className="h-4 w-4" /> PDF</button>
+                                    </div>
+
+                                    <div className="grid md:grid-cols-2 gap-6">
+                                        <img src={character.imageUrl} className="rounded-xl border border-slate-800 w-full object-cover aspect-square" />
+                                        <div className="space-y-4">
+                                            <div className="bg-slate-950 p-4 rounded-xl space-y-3">
+                                                <div className="text-xs font-bold text-red-400 flex justify-between"><span>HP</span><span>{character.hpCurrent}/{character.hpMax}</span></div>
+                                                <div className="text-xs font-bold text-cyan-400 flex justify-between"><span>MP</span><span>{currentMana}/{maxMana}</span></div>
+                                                <div className="text-xs font-bold text-indigo-400 flex justify-between"><span>XP</span><span>{character.xpCurrent}/{character.xpMax}</span></div>
+                                            </div>
+                                            <div className="grid grid-cols-3 gap-2">
+                                                {Object.keys(attributeLabels).map(key => (
+                                                    <div key={key} className="bg-slate-950 p-2 text-center rounded-lg border border-slate-800">
+                                                        <div className="text-[10px] text-slate-500 uppercase">{attributeLabels[key].short}</div>
+                                                        <div className="text-lg font-black text-white">{character.attributes[key]}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="pt-4 border-t border-slate-800">
+                                        <h3 className="text-sm font-bold text-purple-400 mb-2">Lore</h3>
+                                        <p className="text-sm text-slate-300 leading-relaxed">{character.lore}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </section>
+                </main>
+                </div>
+            );
+        }
+
+        // --- Renderiza o App ---
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
